@@ -27,6 +27,7 @@ import os
 import struct
 import sys
 import time
+import socket
 
 import serial
 
@@ -88,6 +89,12 @@ _ALL_PAYLOADFORMATS = [
     _PAYLOADFORMAT_REGISTERS,
     _PAYLOADFORMAT_STRING,
 ]
+
+# ######################## #
+# Modbus instrument object #
+# ######################## #
+
+MAX_TIMEOUT_TCP = 3600
 
 # ######################## #
 # Modbus instrument object #
@@ -1409,6 +1416,147 @@ class Instrument:
 
     # For backward compatibility
     _performCommand = _perform_command
+
+
+class InstrumentTCP:
+
+    def __init__(self, host, port = 502, timeout = 30, debug = True):
+        self._host = None
+        self._port = None
+        self._timeout = None
+        self._debug = debug
+        self._sock = None
+        """
+        Parse host
+        """
+        self.host(host)    
+        """
+        Parse port
+        """
+        self.port(port)
+        """
+        Parse timeout
+        """
+        self.timeout(timeout)
+        """
+        Connect to remote server
+        """
+        for res in socket.getaddrinfo(self._host, self._port,
+                                       socket.AF_INET, socket.SOCK_STREAM):
+            """
+            getaddrinfo returns a 5-tuple with the following structure:
+            (family, type, proto, canonname, sockaddr)
+            sockaddr is 2-tuple meant to be passed to socket.connect()
+            """
+            family, sock_type, proto, canonname, sockaddr = res
+            try:
+                self._sock = socket.socket(family, sock_type, proto)
+            except OSError:
+                raise
+            try:
+                self._sock.settimeout(self._timeout)
+                self._sock.connect(sockaddr)
+            except OSError:
+                raise
+
+    def host(self, host):
+        try:
+            socket.inet_pton(socket.AF_INET, host)
+            self._host = host
+        except OSError:
+            raise
+        
+    def port(self, port):
+        if 0 < int(port) < 65536:
+            self._port = port
+
+    def timeout(self, timeout):
+        if 0 <= timeout <= MAX_TIMEOUT_TCP:
+            self._timeout = timeout
+        else:
+            raise ValueError("Timeout must be in [0-{}]".format(MAX_TIMEOUT_TCP))
+
+    def _print_debug(self, text):
+        if self._debug:
+            _print_out("MinimalModbus debug mode. " + text)
+
+    def is_open(self):
+        return self._sock is not None
+
+    def close(self):
+        if self._sock:
+            self._sock.close()
+            self._sock = None
+
+    # ############### #
+    # Generic command #
+    # ############### #
+
+    def _generic_command(
+        self,
+        functioncode,
+        registeraddress,
+        value = None,
+        number_of_registers = 0,
+        number_of_bits = 0,
+        byteorder = BYTEORDER_BIG,
+        payloadformat = None
+    ):
+        """
+        Perform generic command for reading and writing registers and bits.
+        For the first version, it will not support 'signed' and 'number_of_decimals'.
+        """
+        ALL_ALLOWED_FUNCTIONCODES = [1, 2, 3, 4, 5, 6, 15, 16]
+        ALLOWED_FUNCTIONCODES = {}
+        ALLOWED_FUNCTIONCODES[_PAYLOADFORMAT_BIT] = [1, 2, 5, 15]
+        ALLOWED_FUNCTIONCODES[_PAYLOADFORMAT_BITS] = [1, 2, 15]
+        ALLOWED_FUNCTIONCODES[_PAYLOADFORMAT_REGISTER] = [3, 4, 6, 16]
+        ALLOWED_FUNCTIONCODES[_PAYLOADFORMAT_FLOAT] = [3, 4, 16]
+        ALLOWED_FUNCTIONCODES[_PAYLOADFORMAT_STRING] = [3, 4, 16]
+        ALLOWED_FUNCTIONCODES[_PAYLOADFORMAT_LONG] = [3, 4, 16]
+        ALLOWED_FUNCTIONCODES[_PAYLOADFORMAT_REGISTERS] = [3, 4, 16]
+
+        _check_functioncode(functioncode, ALL_ALLOWED_FUNCTIONCODES)
+        _check_registeraddress(registeraddress)
+        _check_int(
+            number_of_registers,
+            minvalue=0,
+            maxvalue=max(
+                _MAX_NUMBER_OF_REGISTERS_TO_READ, _MAX_NUMBER_OF_REGISTERS_TO_WRITE
+            ),
+            description="number of registers",
+        )
+        _check_int(
+            number_of_bits,
+            minvalue=0,
+            maxvalue=max(_MAX_NUMBER_OF_BITS_TO_READ, _MAX_NUMBER_OF_BITS_TO_WRITE),
+            description="number of bits",
+        )
+        _check_int(
+            byteorder,
+            minvalue=0,
+            maxvalue=_MAX_BYTEORDER_VALUE,
+            description="byteorder",
+        )
+        if payloadformat not in _ALL_PAYLOADFORMATS:
+            if not isinstance(payloadformat, str):
+                raise TypeError(
+                    "The payload format should be a string. Given: {!r}".format(
+                        payloadformat
+                    )
+                )
+            raise ValueError(
+                "Wrong payload format variable. Given: {!r}".format(payloadformat)
+            )
+        
+        number_of_register_bytes = number_of_registers * _NUMBER_OF_BYTES_PER_REGISTER
+
+        # Check combinations: Payload format and functioncode
+        if functioncode not in ALLOWED_FUNCTIONCODES[payloadformat]:
+            raise ValueError(
+                "Wrong functioncode for payloadformat "
+                + "{!r}. Given: {!r}.".format(payloadformat, functioncode)
+            )
 
 
 # ########## #
