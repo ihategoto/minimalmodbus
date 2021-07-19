@@ -28,8 +28,9 @@ import struct
 import sys
 import time
 import socket
+import random
 
-import serial
+#import serial
 
 if sys.version > "3":
     import binascii
@@ -90,11 +91,13 @@ _ALL_PAYLOADFORMATS = [
     _PAYLOADFORMAT_STRING,
 ]
 
-# ######################## #
-# Modbus instrument object #
-# ######################## #
+# ################## #
+# Modbus TCP  consts #
+# ################## #
 
 MAX_TIMEOUT_TCP = 3600
+PROTOCOL_ID = 0
+DEFAULT_UNIT_ID = 0xff
 
 # ######################## #
 # Modbus instrument object #
@@ -1426,6 +1429,7 @@ class InstrumentTCP:
         self._timeout = None
         self._debug = debug
         self._sock = None
+        self._transaction_id = None
         """
         Parse host
         """
@@ -1487,6 +1491,15 @@ class InstrumentTCP:
         if self._sock:
             self._sock.close()
             self._sock = None
+
+    def read_bit(self, registeraddress, functioncode = 2):
+        _check_functioncode(functioncode, [1,2])
+        return self._generic_command(
+            functioncode,
+            registeraddress,
+            number_of_bits = 1,
+            payloadformat = _PAYLOADFORMAT_BIT
+        )
 
     # ############### #
     # Generic command #
@@ -1558,6 +1571,234 @@ class InstrumentTCP:
                 + "{!r}. Given: {!r}.".format(payloadformat, functioncode)
             )
 
+        # Check combinations: byteorder
+        if byteorder:
+            if payloadformat not in [_PAYLOADFORMAT_FLOAT, _PAYLOADFORMAT_LONG]:
+                raise ValueError(
+                    'The "byteorder" parameter can not be used for this payload format. '
+                    + "Given format: {0!r}.".format(payloadformat)
+                )
+
+        # Check combinations: number of bits
+        if payloadformat == _PAYLOADFORMAT_BIT:
+            if number_of_bits != 1:
+                raise ValueError(
+                    "For BIT payload format the number of bits should be 1. "
+                    + "Given: {0!r}.".format(number_of_bits)
+                )
+        elif payloadformat == _PAYLOADFORMAT_BITS:
+            if number_of_bits < 1:
+                raise ValueError(
+                    "For BITS payload format the number of bits should be at least 1. "
+                    + "Given: {0!r}.".format(number_of_bits)
+                )
+        elif number_of_bits:
+            raise ValueError(
+                "The number_of_bits parameter is wrong for payload format "
+                + "{0!r}. Given: {0!r}.".format(payloadformat, number_of_bits)
+            )
+        
+        # Check combinations: Number of registers
+        if functioncode in [1, 2, 5, 15] and number_of_registers:
+            raise ValueError(
+                "The number_of_registers is not valid for this function code. "
+                + "number_of_registers: {0!r}, functioncode {1}.".format(
+                    number_of_registers, functioncode
+                )
+            )
+        elif functioncode in [3, 4, 16] and not number_of_registers:
+            raise ValueError(
+                "The number_of_registers must be > 0 for functioncode "
+                + "{}.".format(functioncode)
+            )
+        elif functioncode == 6 and number_of_registers != 1:
+            raise ValueError(
+                "The number_of_registers must be 1 for functioncode 6. "
+                + "Given: {}.".format(number_of_registers)
+            )
+        if (
+            functioncode == 16
+            and payloadformat == _PAYLOADFORMAT_REGISTER
+            and number_of_registers != 1
+        ):
+            raise ValueError(
+                "Wrong number_of_registers when writing to a "
+                + "single register. Given {0!r}.".format(number_of_registers)
+            )
+            # Note: For function code 16 there is checking also in the content
+            # conversion functions.
+
+        # Check combinations: Value
+        if functioncode in [5, 6, 15, 16] and value is None:
+            raise ValueError(
+                "The input value must be given for this function code. "
+                + "Given {0!r} and {1}.".format(value, functioncode)
+            )
+        elif functioncode in [1, 2, 3, 4] and value is not None:
+            raise ValueError(
+                "The input value should not be given for this function code. "
+                + "Given {0!r} and {1}.".format(value, functioncode)
+            )
+
+        # Check combinations: Value for numerical
+        if functioncode == 16 and payloadformat in [
+            _PAYLOADFORMAT_REGISTER,
+            _PAYLOADFORMAT_FLOAT,
+            _PAYLOADFORMAT_LONG,
+        ]:
+            _check_numerical(value, description="input value")
+        if functioncode == 6 and payloadformat == _PAYLOADFORMAT_REGISTER:
+            _check_numerical(value, description="input value")
+
+        # Check combinations: Value for string
+        if functioncode == 16 and payloadformat == _PAYLOADFORMAT_STRING:
+            _check_string(
+                value, "input string", minlength=1, maxlength=number_of_register_bytes
+            )
+            # Note: The string might be padded later, so the length might be shorter
+            # than number_of_register_bytes.
+
+        # Check combinations: Value for registers
+        if functioncode == 16 and payloadformat == _PAYLOADFORMAT_REGISTERS:
+            if not isinstance(value, list):
+                raise TypeError(
+                    "The value parameter for payloadformat REGISTERS must be a list. "
+                    + "Given {0!r}.".format(value)
+                )
+
+            if len(value) != number_of_registers:
+                raise ValueError(
+                    "The list length does not match number of registers. "
+                    + "List: {0!r},  Number of registers: {1!r}.".format(
+                        value, number_of_registers
+                    )
+                )
+
+        # Check combinations: Value for bit
+        if functioncode in [5, 15] and payloadformat == _PAYLOADFORMAT_BIT:
+            _check_int(
+                value,
+                minvalue=0,
+                maxvalue=1,
+                description="input value for payload format BIT",
+            )
+
+        # Check combinations: Value for bits
+        if functioncode == 15 and payloadformat == _PAYLOADFORMAT_BITS:
+            if not isinstance(value, list):
+                raise TypeError(
+                    "The value parameter for payloadformat BITS must be a list. "
+                    + "Given {0!r}.".format(value)
+                )
+
+            if len(value) != number_of_bits:
+                raise ValueError(
+                    "The list length does not match number of bits. "
+                    + "List: {0!r},  Number of registers: {1!r}.".format(
+                        value, number_of_registers
+                    )
+                )      
+
+        """
+        _create_payload creates the MODBUS PDU, so it can be used in the ModbusTCP implementation.
+        """
+        payload_to_slave = string_to_bytes(
+            _create_payload(
+                functioncode,
+                registeraddress,
+                value,
+                0,
+                number_of_registers,
+                number_of_bits,
+                False,
+                byteorder,
+                payloadformat,
+            )
+        )
+        payload_from_slave = bytes_to_string(self._perform_command(functioncode, payload_to_slave))[1:] # Strip the payload from the function code
+        return _parse_payload(
+            payload_from_slave, 
+            functioncode,
+            registeraddress,
+            value,
+            0,
+            number_of_registers,
+            number_of_bits,
+            False,
+            byteorder,
+            payloadformat
+        )
+
+    def _perform_command(self, functioncode, payload_to_slave):
+        _check_functioncode(functioncode, None)
+        """
+        Create the transaction identifier.
+        """
+        self._transaction_id = random.randint(0, 65535)
+        request = _embed_payload_TCP(self._transaction_id, functioncode, payload_to_slave)
+        # Communicate
+        mbap, payload = self._communicate(request)
+        functioncode_rx = payload[0]
+        if functioncode_rx != functioncode:
+            self._print_debug("Function codes do not match : {} {}".format(functioncode_rx, functioncode))
+        return payload
+
+    def _communicate(self, request):
+        self._print_debug("Will write to instrument: {!r}".format(
+                request
+            )
+        )
+        try:
+            send_b = self._sock.send(request)
+        except OSError:
+            raise
+        
+        if send_b != len(request):
+            self.close()
+            raise ModbusTCPException("Something went wrong while sending data to remote host: size does not match.")
+
+        try:
+            """
+            Receive the mbap header
+            """
+            mbap = self._recv_bytes(7)
+            self._print_debug("Received the MBAP header: {!r}".format(mbap))
+            ok, length, text_msg = _verify_MBAP(self._transaction_id, mbap)
+            if not ok:
+                raise MBAPHeaderNotValid(text_msg)
+            """
+            Receive the body
+            Note that 'length' includes one extra byte for the unit identifier.
+            """
+            self._print_debug("Will read the body by the remote host.")
+            data = self._recv_bytes(length - 1)
+            self._print_debug("Received {!r} by the remote host.".format(data))
+        except OSError:
+            raise
+        return (mbap, data)
+
+    def _recv_bytes(self, size):
+        data = bytes()
+        while len(data) < size:
+            temp = self._recv(size - len(data))
+            if temp is None:
+                self.close()
+                raise OSError(
+                    "An error occured while receiving data from remote host."
+                )
+            data += temp
+        return data
+    
+    def _recv(self, size):
+        try:
+            data = self._sock.recv(size)
+        except OSError:
+            return None
+
+        if not data:
+            return None
+        
+        return data
 
 # ########## #
 # Exceptions #
@@ -1570,6 +1811,16 @@ class ModbusException(IOError):
     Inherits from IOError, which is an alias for OSError in Python3.
     """
 
+class ModbusTCPException(IOError):
+    """
+    Base class for Modbus TCP communication exceptions.
+    Inherits from IOError, which is an alias for OSError in Python3.
+    """
+
+class MBAPHeaderNotValid(ModbusTCPException):
+    """
+    The MBAP header received is not valid.
+    """
 
 class SlaveReportedException(ModbusException):
     """Base class for exceptions that the slave (instrument) reports."""
@@ -1610,6 +1861,17 @@ class InvalidResponseError(MasterReportedException):
 # Payload handling #
 # ################ #
 
+"""
+The following lambda expression converts strings to bytes.
+It is used to support the existing utilities for the payload creation/parsing etc.
+"""
+string_to_bytes = lambda s:bytes(s,'latin1')
+
+"""
+The following lambda expressione converts bytes to string encoded 'latin1'.
+It is used to support the existing utilities for the payload creation/parsing etc.
+"""
+bytes_to_string = lambda b: b.decode('latin1')
 
 def _create_payload(
     functioncode,
@@ -1786,6 +2048,34 @@ def _embed_payload(slaveaddress, mode, functioncode, payloaddata):
 
     return request
 
+def _embed_payload_TCP(transaction_id, functioncode, payload):
+    _check_functioncode(functioncode, None)
+    request = (
+        _create_MBAP(transaction_id, len(payload))
+        + struct.pack(">B", functioncode)
+        + payload
+    )
+    return request
+
+def _create_MBAP(transaction_id, payload_length):
+    mbap_header = struct.pack(">HHHB", transaction_id, 0x00, payload_length + 2, 0xFF)
+    return mbap_header
+
+def _verify_MBAP(transaction_id, mbap):
+    (transaction_id_rx, protocol_id_rx, len_rx, unit_id_rx) = struct.unpack(">HHHB", mbap)
+    if transaction_id_rx != transaction_id:
+        text_msg = "Transaction ids do not match. Sent: {!r} Received: {!r}".format(transaction_id_rx, transaction_id)
+        return (False, 0, text_msg)
+    if protocol_id_rx != PROTOCOL_ID:
+        text_msg = "Protocol id received is not 0: {!r}".format(protocol_id_rx)
+        return (False, 0, text_msg)
+    if len_rx >= 256:
+        text_msg = "Length exceeds 256 bytes: {}".format(len_rx)
+        return (False, 0, text_msg)
+    if unit_id_rx != DEFAULT_UNIT_ID:
+        text_msg = "Unit id is not 0xff: {!r}".format(unit_id_rx)
+        return (False, 0, text_msg)
+    return (True, len_rx, "")
 
 def _extract_payload(response, slaveaddress, mode, functioncode):
     """Extract the payload data part from the slave's response.
