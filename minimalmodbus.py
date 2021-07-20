@@ -27,6 +27,8 @@ import os
 import struct
 import sys
 import time
+import socket
+import random
 
 import serial
 
@@ -66,10 +68,19 @@ _latest_read_times = {}  # Key: port name (str), value: timestamp (float)
 
 MODE_RTU = "rtu"
 MODE_ASCII = "ascii"
+MODE_TCP = "tcp"
 BYTEORDER_BIG = 0
 BYTEORDER_LITTLE = 1
 BYTEORDER_BIG_SWAP = 2
 BYTEORDER_LITTLE_SWAP = 3
+
+# ############# #
+# TCP constants #
+# ############# #
+
+_MAX_TIMEOUT_TCP = 30
+_PROTOCOL_ID = 0
+_DEFAULT_UNIT_ID = 0xff
 
 # Replace with enum when Python3 only
 _PAYLOADFORMAT_BIT = "bit"
@@ -118,112 +129,186 @@ class Instrument:
         mode=MODE_RTU,
         close_port_after_each_call=False,
         debug=False,
+        host = None, 
+        hostport = None,
+        timeout = None
     ):
-        """Initialize instrument and open corresponding serial port."""
-        self.address = slaveaddress
-        """Slave address (int). Most often set by the constructor
-        (see the class documentation). """
-
-        self.mode = mode
-        """Slave mode (str), can be MODE_RTU or MODE_ASCII.
-        Most often set by the constructor (see the class documentation).
-
-        Changing this will not affect how other instruments use the same serial port.
-
-        New in version 0.6.
-        """
-
-        self.precalculate_read_size = True
-        """If this is :const:`False`, the serial port reads until timeout
-        instead of just reading a specific number of bytes. Defaults to :const:`True`.
-
-        Changing this will not affect how other instruments use the same serial port.
-
-        New in version 0.5.
-        """
-
         self.debug = debug
-        """Set this to :const:`True` to print the communication details.
-        Defaults to :const:`False`.
+        if mode != MODE_TCP:
+            """Initialize instrument and open corresponding serial port."""
+            self.address = slaveaddress
+            """Slave address (int). Most often set by the constructor
+            (see the class documentation). """
 
-        Most often set by the constructor (see the class documentation).
+            self.mode = mode
+            """Slave mode (str), can be MODE_RTU or MODE_ASCII.
+            Most often set by the constructor (see the class documentation).
 
-        Changing this will not affect how other instruments use the same serial port.
-        """
+            Changing this will not affect how other instruments use the same serial port.
 
-        self.clear_buffers_before_each_transaction = True
-        """If this is :const:`True`, the serial port read and write buffers are
-        cleared before each request to the instrument, to avoid cumulative byte
-        sync errors across multiple messages. Defaults to :const:`True`.
+            New in version 0.6.
+            """
 
-        Changing this will not affect how other instruments use the same serial port.
+            self.precalculate_read_size = True
+            """If this is :const:`False`, the serial port reads until timeout
+            instead of just reading a specific number of bytes. Defaults to :const:`True`.
 
-        New in version 1.0.
-        """
+            Changing this will not affect how other instruments use the same serial port.
 
-        self.close_port_after_each_call = close_port_after_each_call
-        """If this is :const:`True`, the serial port will be closed after each
-        call. Defaults to :const:`False`.
+            New in version 0.5.
+            """
 
-        Changing this will not affect how other instruments use the same serial port.
+            self.debug = debug
+            """Set this to :const:`True` to print the communication details.
+            Defaults to :const:`False`.
 
-        Most often set by the constructor (see the class documentation).
-        """
+            Most often set by the constructor (see the class documentation).
 
-        self.handle_local_echo = False
-        """Set to to :const:`True` if your RS-485 adaptor has local echo enabled.
-        Then the transmitted message will immeadiately appear at the receive
-        line of the RS-485 adaptor. MinimalModbus will then read and discard
-        this data, before reading the data from the slave.
-        Defaults to :const:`False`.
+            Changing this will not affect how other instruments use the same serial port.
+            """
 
-        Changing this will not affect how other instruments use the same serial port.
+            self.clear_buffers_before_each_transaction = True
+            """If this is :const:`True`, the serial port read and write buffers are
+            cleared before each request to the instrument, to avoid cumulative byte
+            sync errors across multiple messages. Defaults to :const:`True`.
 
-        New in version 0.7.
-        """
+            Changing this will not affect how other instruments use the same serial port.
 
-        self.serial = None
-        """The serial port object as defined by the pySerial module. Created by the constructor.
+            New in version 1.0.
+            """
 
-        Attributes that could be changed after initialisation:
+            self.close_port_after_each_call = close_port_after_each_call
+            """If this is :const:`True`, the serial port will be closed after each
+            call. Defaults to :const:`False`.
 
-            - port (str):      Serial port name.
-                - Most often set by the constructor (see the class documentation).
-            - baudrate (int):  Baudrate in Baud.
-                - Defaults to 19200.
-            - parity (probably int): Parity. See the pySerial module for documentation.
-                - Defaults to serial.PARITY_NONE.
-            - bytesize (int):  Bytesize in bits.
-                - Defaults to 8.
-            - stopbits (int):  The number of stopbits.
-                - Defaults to 1.
-            - timeout (float): Read timeout value in seconds.
-                - Defaults to 0.05 s.
-            - write_timeout (float): Write timeout value in seconds.
-                - Defaults to 2.0 s.
-        """
+            Changing this will not affect how other instruments use the same serial port.
 
-        if port not in _serialports or not _serialports[port]:
-            self._print_debug("Create serial port {}".format(port))
-            self.serial = _serialports[port] = serial.Serial(
-                port=port,
-                baudrate=19200,
-                parity=serial.PARITY_NONE,
-                bytesize=8,
-                stopbits=1,
-                timeout=0.05,
-                write_timeout=2.0,
-            )
+            Most often set by the constructor (see the class documentation).
+            """
+
+            self.handle_local_echo = False
+            """Set to to :const:`True` if your RS-485 adaptor has local echo enabled.
+            Then the transmitted message will immeadiately appear at the receive
+            line of the RS-485 adaptor. MinimalModbus will then read and discard
+            this data, before reading the data from the slave.
+            Defaults to :const:`False`.
+
+            Changing this will not affect how other instruments use the same serial port.
+
+            New in version 0.7.
+            """
+
+            self.serial = None
+            """The serial port object as defined by the pySerial module. Created by the constructor.
+
+            Attributes that could be changed after initialisation:
+
+                - port (str):      Serial port name.
+                    - Most often set by the constructor (see the class documentation).
+                - baudrate (int):  Baudrate in Baud.
+                    - Defaults to 19200.
+                - parity (probably int): Parity. See the pySerial module for documentation.
+                    - Defaults to serial.PARITY_NONE.
+                - bytesize (int):  Bytesize in bits.
+                    - Defaults to 8.
+                - stopbits (int):  The number of stopbits.
+                    - Defaults to 1.
+                - timeout (float): Read timeout value in seconds.
+                    - Defaults to 0.05 s.
+                - write_timeout (float): Write timeout value in seconds.
+                    - Defaults to 2.0 s.
+            """
+
+            if port not in _serialports or not _serialports[port]:
+                self._print_debug("Create serial port {}".format(port))
+                self.serial = _serialports[port] = serial.Serial(
+                    port=port,
+                    baudrate=19200,
+                    parity=serial.PARITY_NONE,
+                    bytesize=8,
+                    stopbits=1,
+                    timeout=0.05,
+                    write_timeout=2.0,
+                )
+            else:
+                self._print_debug("Serial port {} already exists".format(port))
+                self.serial = _serialports[port]
+                if (self.serial.port is None) or (not self.serial.is_open):
+                    self._print_debug("Serial port {} is closed. Opening.".format(port))
+                    self.serial.open()
+
+            if self.close_port_after_each_call:
+                self._print_debug("Closing serial port {}".format(port))
+                self.serial.close()
+
+            """If MODBUS over serial line the following functions are just identity."""
+            self.string_to_bytes = lambda s:s
+            self.bytes_to_string = lambda b:b
         else:
-            self._print_debug("Serial port {} already exists".format(port))
-            self.serial = _serialports[port]
-            if (self.serial.port is None) or (not self.serial.is_open):
-                self._print_debug("Serial port {} is closed. Opening.".format(port))
-                self.serial.open()
+            if host is None or port is None:
+                raise ValueError(
+                    "host and port needed for Modbus TCP."
+                )
+            self._host = None
+            self._port = None
+            self._timeout = None
+            self._sock = None
+            """
+            Parse host
+            """
+            self.host(host)
+            """
+            Parse port
+            """
+            self.port(hostport)
+            """
+            Parse timeout
+            """
+            self.timeout(timeout)
+            """
+            Connect to remote server
+            """
+            for res in socket.getaddrinfo(self._host, self._port, socket.AF_INET, socket.SOCK_STREAM):
+                """
+                socket.getaddrinfo returns a 5-tuple with the following structure:
+                (family, sock_type, proto, canonname, sockaddr)
+                sockaddr is a 2-tuple (for AF_INET) meant to be passato to socket.connect.
+                """
+                family, sock_type, proto, canonname, sockaddr = res
+                try:
+                    self._sock = socket.socket(family, sock_type, proto)
+                except OSError:
+                    raise
+                try:
+                    self._sock.settimeout(self._timeout)
+                    self._sock.connect(sockaddr)
+                except OSError:
+                    raise
+            """If Modbus TCP we need to convert the strings returned by minimalmodbus utilities to bytes, and the other way round."""
+            self.string_to_bytes = lambda s : bytes(s, 'latin1')
+            self.bytes_to_string = lambda b : b.decode('latin1')
+            self._perform_command = self._perform_command_TCP
 
-        if self.close_port_after_each_call:
-            self._print_debug("Closing serial port {}".format(port))
-            self.serial.close()
+    def host(self, host):
+        try:
+            socket.inet_pton(socket.AF_INET, host)
+            self._host = host
+        except OSError:
+            raise
+    
+    def port(self, port):
+        if 0 < int(port) < 65536:
+            self._port = port
+
+    def timeout(self, timeout):
+        if timeout is None:
+            self._timeout = _MAX_TIMEOUT_TCP
+            return
+        if 0 <= timeout <= _MAX_TIMEOUT_TCP:
+            self._timeout = timeout
+        else:
+            raise ValueError("Timeout must be in [0-{}]".format(_MAX_TIMEOUT_TCP))
+
 
     def __repr__(self):
         """Give string representation of the :class:`.Instrument` object."""
@@ -1154,20 +1239,24 @@ class Instrument:
                 )
 
         # Create payload
-        payload_to_slave = _create_payload(
-            functioncode,
-            registeraddress,
-            value,
-            number_of_decimals,
-            number_of_registers,
-            number_of_bits,
-            signed,
-            byteorder,
-            payloadformat,
+        payload_to_slave = self.string_to_bytes(
+            _create_payload(
+                functioncode,
+                registeraddress,
+                value,
+                number_of_decimals,
+                number_of_registers,
+                number_of_bits,
+                signed,
+                byteorder,
+                payloadformat,
+            )
         )
 
         # Communicate with instrument
-        payload_from_slave = self._perform_command(functioncode, payload_to_slave)
+        payload_from_slave = self.bytes_to_string(
+            self._perform_command(functioncode, payload_to_slave)
+        )
 
         # Parse response payload
         return _parse_payload(
@@ -1186,6 +1275,20 @@ class Instrument:
     # #################################### #
     # Communication implementation details #
     # #################################### #
+
+    def _perform_command_TCP(self, functioncode, payload_to_slave):
+        _check_functioncode(functioncode, None)
+        """
+        Create the transaction identifier.
+        """
+        self._transaction_id = random.randint(0, 65535)
+        request = _embed_payload_TCP(self._transaction_id, functioncode, payload_to_slave)
+        # Communicate
+        mbap, payload = self._communicate_TCP(request)
+        functioncode_rx = payload[0]
+        if functioncode_rx != functioncode:
+            self._print_debug("Function codes do not match : {} {}".format(functioncode_rx, functioncode))
+        return payload[1:] # Strip the payload from the functioncode
 
     def _perform_command(self, functioncode, payload_to_slave):
         """Perform the command having the *functioncode*.
@@ -1244,6 +1347,63 @@ class Instrument:
             response, self.address, self.mode, functioncode
         )
         return payload_from_slave
+
+    def _communicate_TCP(self, request):
+        self._print_debug("Will write to instrument: {!r}".format(
+                request
+            )
+        )
+        try:
+            send_b = self._sock.send(request)
+        except OSError:
+            raise
+        
+        if send_b != len(request):
+            self.close()
+            raise ModbusTCPException("Something went wrong while sending data to remote host: size does not match.")
+
+        try:
+            """
+            Receive the mbap header
+            """
+            mbap = self._recv_bytes(7)
+            self._print_debug("Received the MBAP header: {!r}".format(mbap))
+            ok, length, text_msg = _verify_MBAP(self._transaction_id, mbap)
+            if not ok:
+                raise MBAPHeaderNotValid(text_msg)
+            """
+            Receive the body
+            Note that 'length' includes one extra byte for the unit identifier.
+            """
+            self._print_debug("Will read the body by the remote host.")
+            data = self._recv_bytes(length - 1)
+            self._print_debug("Received {!r} by the remote host.".format(data))
+        except OSError:
+            raise
+        return (mbap, data)
+
+    def _recv_bytes(self, size):
+        data = bytes()
+        while len(data) < size:
+            temp = self._recv(size - len(data))
+            if temp is None:
+                self.close()
+                raise OSError(
+                    "An error occured while receiving data from remote host."
+                )
+            data += temp
+        return data
+    
+    def _recv(self, size):
+        try:
+            data = self._sock.recv(size)
+        except OSError:
+            return None
+
+        if not data:
+            return None
+        
+        return data
 
     def _communicate(self, request, number_of_bytes_to_read):
         """Talk to the slave via a serial port.
@@ -1422,6 +1582,16 @@ class ModbusException(IOError):
     Inherits from IOError, which is an alias for OSError in Python3.
     """
 
+class ModbusTCPException(IOError):
+    """
+    Base class for Modbus TCP communication exceptions.
+    Inherits from IOError, which is an alias for OSError in Python3.
+    """
+
+class MBAPHeaderNotValid(ModbusTCPException):
+    """
+    The MBAP header received is not valid.
+    """
 
 class SlaveReportedException(ModbusException):
     """Base class for exceptions that the slave (instrument) reports."""
@@ -1637,6 +1807,35 @@ def _embed_payload(slaveaddress, mode, functioncode, payloaddata):
         request = first_part + _calculate_crc_string(first_part)
 
     return request
+
+def _embed_payload_TCP(transaction_id, functioncode, payload):
+    _check_functioncode(functioncode, None)
+    request = (
+        _create_MBAP(transaction_id, len(payload))
+        + struct.pack(">B", functioncode)
+        + payload
+    )
+    return request
+
+def _create_MBAP(transaction_id, payload_length):
+    mbap_header = struct.pack(">HHHB", transaction_id, 0x00, payload_length + 2, 0xFF)
+    return mbap_header
+
+def _verify_MBAP(transaction_id, mbap):
+    (transaction_id_rx, protocol_id_rx, len_rx, unit_id_rx) = struct.unpack(">HHHB", mbap)
+    if transaction_id_rx != transaction_id:
+        text_msg = "Transaction ids do not match. Sent: {!r} Received: {!r}".format(transaction_id_rx, transaction_id)
+        return (False, 0, text_msg)
+    if protocol_id_rx != _PROTOCOL_ID:
+        text_msg = "Protocol id received is not 0: {!r}".format(protocol_id_rx)
+        return (False, 0, text_msg)
+    if len_rx >= 256:
+        text_msg = "Length exceeds 256 bytes: {}".format(len_rx)
+        return (False, 0, text_msg)
+    if unit_id_rx != _DEFAULT_UNIT_ID:
+        text_msg = "Unit id is not 0xff: {!r}".format(unit_id_rx)
+        return (False, 0, text_msg)
+    return (True, len_rx, "")
 
 
 def _extract_payload(response, slaveaddress, mode, functioncode):
