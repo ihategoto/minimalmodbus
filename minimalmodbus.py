@@ -29,6 +29,7 @@ import sys
 import time
 import socket
 import random
+from typing import Type
 
 #import serial
 
@@ -1499,6 +1500,111 @@ class InstrumentTCP:
             registeraddress,
             number_of_bits = 1,
             payloadformat = _PAYLOADFORMAT_BIT
+        )
+
+    def write_bit(self, registeraddress, value, functioncode = 5):
+        _check_functioncode(functioncode, [5, 15])
+        _check_int(value, minvalue = 0, maxvalue = 1, description = "input value")
+        self._generic_command(
+            functioncode,
+            registeraddress,
+            value = value,
+            number_of_bits = 1,
+            payloadformat = _PAYLOADFORMAT_BIT
+        )
+
+    def read_bits(self, registeraddress, number_of_bits, functioncode = 2):
+        _check_functioncode(functioncode, [1, 2])
+        _check_int(
+            number_of_bits,
+            minvalue = 1,
+            maxvalue = _MAX_NUMBER_OF_BITS_TO_READ,
+            description = "number of bits"
+        )
+        return self._generic_command(
+            functioncode,
+            registeraddress,
+            number_of_bits = number_of_bits,
+            payloadformat = _PAYLOADFORMAT_BITS
+        )
+
+    def write_bits(self, registeraddress, values):
+        if not isinstance(values, list):
+            raise TypeError(
+                'The "values parameter" must be a list. Given: {0!r}'.format(values)
+            )
+        _check_int(
+            len(values),
+            minvalue = 1,
+            maxvalue = _MAX_NUMBER_OF_BITS_TO_WRITE,
+            description = "length of input list"
+        )
+        self._generic_command(
+            15,
+            registeraddress,
+            values,
+            number_of_bits = len(values),
+            payloadformat = _PAYLOADFORMAT_BITS
+        )
+    
+    def read_register(self, registeraddress, number_of_decimals = 0, functioncode = 3, signed = False):
+        """
+        v 0.1 : keep 'number_of_decimals' and 'signed' parameters in order to mantain the same structure of Instrument.read_register.
+        """
+        _check_functioncode(functioncode, [3, 4])
+        return self._generic_command(
+            functioncode,
+            registeraddress,
+            number_of_registers = 1,
+            payloadformat = _PAYLOADFORMAT_REGISTER
+        )
+
+    def write_register(self, registeraddress, value, number_of_decimals = 0, functioncode = 16, signed = False):
+        """
+        v 0.1 : keep 'number_of_decimals' and 'signed' parameters in order to mantain the same structure of Instrument.read_register.
+        """
+        _check_functioncode(functioncode, [6, 16])
+        _check_numerical(value, description = "input value")
+        self._generic_command(
+            functioncode,
+            registeraddress,
+            value,
+            number_of_registers = 1,
+            payloadformat = _PAYLOADFORMAT_REGISTER
+        )
+
+    def read_registers(self, registeraddress, number_of_registers, functioncode = 3):
+        _check_functioncode(functioncode, [3, 4])
+        _check_int(
+            number_of_registers,
+            minvalue = 1,
+            maxvalue = _MAX_NUMBER_OF_REGISTERS_TO_READ,
+            description = "number of registers"
+        )
+        return self._generic_command(
+            functioncode,
+            registeraddress,
+            number_of_registers = number_of_registers,
+            payloadformat = _PAYLOADFORMAT_REGISTERS
+        )
+
+    def write_registers(self, registeraddress, values):
+        if not isinstance(values, list):
+            raise TypeError(
+                'The "values parameter" must be a list. Given: {!r}'.format(values)
+            )
+        _check_int(
+            len(values),
+            minvalue = 1,
+            maxvalue = _MAX_NUMBER_OF_REGISTERS_TO_WRITE,
+            description = "length of input list"
+        )
+        self._generic_command(
+            16,
+            registeraddress,
+            values,
+            number_of_registers = len(values),
+            payloadformat = _PAYLOADFORMAT_REGISTERS
         )
 
     # ############### #
