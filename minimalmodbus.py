@@ -108,18 +108,7 @@ _ALL_PAYLOADFORMATS = [
 class Instrument:
     """Instrument class for talking to instruments (slaves).
 
-    Uses the Modbus RTU or ASCII protocols (via RS485 or RS232).
-
-    Args:
-        * port (str): The serial port name, for example ``/dev/ttyUSB0`` (Linux),
-          ``/dev/tty.usbserial`` (OS X) or ``COM4`` (Windows).
-        * slaveaddress (int): Slave address in the range 1 to 247 (use decimal numbers,
-          not hex). Address 0 is for broadcast, and 248-255 are reserved.
-        * mode (str): Mode selection. Can be MODE_RTU or MODE_ASCII.
-        * close_port_after_each_call (bool): If the serial port should be closed after
-          each call to the instrument.
-        * debug (bool): Set this to :const:`True` to print the communication details
-
+    Uses the Modbus RTU or ASCII protocols (via RS485 or RS232) or ModBus TCP.
     """
 
     def __init__(
@@ -133,21 +122,43 @@ class Instrument:
         hostport = None,
         timeout = None
     ):
+        """Class constructor.
+
+        Args:
+            * port (str): The serial port name, for example ``/dev/ttyUSB0`` (Linux),
+            ``/dev/tty.usbserial`` (OS X) or ``COM4`` (Windows).
+            * slaveaddress (int): Slave address in the range 1 to 247 (use decimal numbers,
+            not hex). Address 0 is for broadcast, and 248-255 are reserved.
+            * mode (str): Mode selection. Can be MODE_RTU or MODE_ASCII.
+            * close_port_after_each_call (bool): If the serial port should be closed after
+            each call to the instrument.
+            * debug (bool): Set this to :const:`True` to print the communication details
+            * host (str): remote host's IP address.
+            * hostport (int): remote host's port number.
+            * timeout (int): timeout in seconds for TCP actions.
+        """
         self.debug = debug
+        """Set this to :const:`True` to print the communication details.
+        Defaults to :const:`False`.
+
+        Most often set by the constructor (see the class documentation).
+
+        Changing this will not affect how other instruments use the same serial port or other TCP connections.
+        """
+        self.mode = mode
+        """Slave mode (str), can be MODE_RTU or MODE_ASCII or MODE_TCP.
+        Most often set by the constructor (see the class documentation).
+
+        Changing this will not affect how other instruments use the same serial port or other TCP connections.
+
+        New in version 0.6.
+        """
         if mode != MODE_TCP:
             """Initialize instrument and open corresponding serial port."""
             self.address = slaveaddress
             """Slave address (int). Most often set by the constructor
             (see the class documentation). """
 
-            self.mode = mode
-            """Slave mode (str), can be MODE_RTU or MODE_ASCII.
-            Most often set by the constructor (see the class documentation).
-
-            Changing this will not affect how other instruments use the same serial port.
-
-            New in version 0.6.
-            """
 
             self.precalculate_read_size = True
             """If this is :const:`False`, the serial port reads until timeout
@@ -156,15 +167,6 @@ class Instrument:
             Changing this will not affect how other instruments use the same serial port.
 
             New in version 0.5.
-            """
-
-            self.debug = debug
-            """Set this to :const:`True` to print the communication details.
-            Defaults to :const:`False`.
-
-            Most often set by the constructor (see the class documentation).
-
-            Changing this will not affect how other instruments use the same serial port.
             """
 
             self.clear_buffers_before_each_transaction = True
@@ -242,10 +244,10 @@ class Instrument:
                 self.serial.close()
 
             """If MODBUS over serial line the following functions are just identity."""
-            self.string_to_bytes = lambda s:s
-            self.bytes_to_string = lambda b:b
+            self.string_to_bytes = lambda s : s
+            self.bytes_to_string = lambda b : b
         else:
-            if host is None or port is None:
+            if host is None or hostport is None:
                 raise ValueError(
                     "host and port needed for Modbus TCP."
                 )
@@ -253,43 +255,27 @@ class Instrument:
             self._port = None
             self._timeout = None
             self._sock = None
-            """
-            Parse host
-            """
-            self.host(host)
-            """
-            Parse port
-            """
-            self.port(hostport)
-            """
-            Parse timeout
-            """
-            self.timeout(timeout)
-            """
-            Connect to remote server
-            """
-            for res in socket.getaddrinfo(self._host, self._port, socket.AF_INET, socket.SOCK_STREAM):
-                """
-                socket.getaddrinfo returns a 5-tuple with the following structure:
-                (family, sock_type, proto, canonname, sockaddr)
-                sockaddr is a 2-tuple (for AF_INET) meant to be passato to socket.connect.
-                """
-                family, sock_type, proto, canonname, sockaddr = res
-                try:
-                    self._sock = socket.socket(family, sock_type, proto)
-                except OSError:
-                    raise
-                try:
-                    self._sock.settimeout(self._timeout)
-                    self._sock.connect(sockaddr)
-                except OSError:
-                    raise
+            self.open(host, hostport, timeout)
             """If Modbus TCP we need to convert the strings returned by minimalmodbus utilities to bytes, and the other way round."""
             self.string_to_bytes = lambda s : bytes(s, 'latin1')
             self.bytes_to_string = lambda b : b.decode('latin1')
             self._perform_command = self._perform_command_TCP
 
     def host(self, host):
+        """Set and parse the host provided by the user.
+        
+        Args:
+            * host (str): remote host's IP.
+
+        Returns:
+            None
+
+        Raises:
+            OSError
+
+        """
+        if self.mode != MODE_TCP:
+            raise TypeError("The instrument is not using MODBUS TCP.")
         try:
             socket.inet_pton(socket.AF_INET, host)
             self._host = host
@@ -297,10 +283,39 @@ class Instrument:
             raise
     
     def port(self, port):
+        """Set and parse the port provided by the user.
+
+        Args:
+            * port (int): remote host's port.
+        
+        Returns.
+            None
+
+        Raises:
+            ValueError
+        """
+        if self.mode != MODE_TCP:
+            raise TypeError("The instrument is not using MODBUS TCP.")
         if 0 < int(port) < 65536:
             self._port = port
+        else:
+            raise ValueError("Port given is not valid.")
 
     def timeout(self, timeout):
+        """Set and parse the timeout provided by the user.
+
+        Args:
+            * timeout (int): timeout in seconds.
+
+        Returns:
+            None
+
+        Raises:
+            ValueError
+        
+        """
+        if self.mode != MODE_TCP:
+            raise TypeError("The instrument is not using MODBUS TCP.")
         if timeout is None:
             self._timeout = _MAX_TIMEOUT_TCP
             return
@@ -308,28 +323,95 @@ class Instrument:
             self._timeout = timeout
         else:
             raise ValueError("Timeout must be in [0-{}]".format(_MAX_TIMEOUT_TCP))
+        
+    def close(self):
+        """Close the socket gracefully."""
+        if self._sock is None:
+            return
+        self._sock.close()
+        self._sock = None
 
+    def is_open(self):
+        """Check whether the socket is closed or not."""
+        return self._sock is not None
+
+    def open(self, host, port, timeout):
+        """Open a connection with the remote host.
+        
+        Args:
+            * host (str): Remote host IP address.
+            * port (int): Host port. It must be in [1-65535] range.
+            * timeout (int): Timeout for TCP connection.
+
+        Returns:
+            None
+        
+        Raises:
+            OSError and subclasses.
+        """
+        if self.mode != MODE_TCP:
+            raise TypeError("The instrument is not using MODBUS TCP.")
+        """Parse host"""
+        self.host(host)
+        """Parse port"""
+        self.port(port)
+        """Parse timeout"""
+        self.timeout(timeout)
+        """Connect to remote server"""
+        for res in socket.getaddrinfo(self._host, self._port, socket.AF_INET, socket.SOCK_STREAM):
+            """
+            socket.getaddrinfo returns a 5-tuple with the following structure:
+            (family, sock_type, proto, canonname, sockaddr)
+            sockaddr is a 2-tuple (for AF_INET) meant to be given to socket.connect.
+            """
+            family, sock_type, proto, canonname, sockaddr = res
+            try:
+                self._sock = socket.socket(family, sock_type, proto)
+            except OSError:
+                raise
+            try:
+                self._sock.settimeout(self._timeout)
+                self._sock.connect(sockaddr)
+            except OSError:
+                self.close()
+                raise
 
     def __repr__(self):
         """Give string representation of the :class:`.Instrument` object."""
-        template = (
-            "{}.{}<id=0x{:x}, address={}, mode={}, close_port_after_each_call={}, "
-            + "precalculate_read_size={}, clear_buffers_before_each_transaction={}, "
-            + "handle_local_echo={}, debug={}, serial={}>"
-        )
-        return template.format(
-            self.__module__,
-            self.__class__.__name__,
-            id(self),
-            self.address,
-            self.mode,
-            self.close_port_after_each_call,
-            self.precalculate_read_size,
-            self.clear_buffers_before_each_transaction,
-            self.handle_local_echo,
-            self.debug,
-            self.serial,
-        )
+        if self.mode != MODE_TCP:
+            template = (
+                "{}.{}<id=0x{:x}, address={}, mode={}, close_port_after_each_call={}, "
+                + "precalculate_read_size={}, clear_buffers_before_each_transaction={}, "
+                + "handle_local_echo={}, debug={}, serial={}>"
+            )
+            return template.format(
+                self.__module__,
+                self.__class__.__name__,
+                id(self),
+                self.address,
+                self.mode,
+                self.close_port_after_each_call,
+                self.precalculate_read_size,
+                self.clear_buffers_before_each_transaction,
+                self.handle_local_echo,
+                self.debug,
+                self.serial,
+            )
+        else:
+            template = (
+                "{}.{}<id=0x{:x}, address={}, port={}, timeout={}, "
+                + "mode={}, debug={}"
+            )
+            return template.format(
+                self.__module__,
+                self.__class__.__name__,
+                id(self),
+                self._host,
+                self._port,
+                self._timeout,
+                self.mode,
+                self.debug
+            )
 
     def _print_debug(self, text):
         if self.debug:
@@ -1277,6 +1359,19 @@ class Instrument:
     # #################################### #
 
     def _perform_command_TCP(self, functioncode, payload_to_slave):
+        """Create the ModBus TCP frame to be sent to the remote host.
+
+        Args:
+            * functioncode: The functioncode for the command to be performed.
+            * payload_to_slave: ModBus PDU.
+
+        Returns:
+            The ModBus PDU stripped from the functioncode.
+
+        Raises:
+            ValueError, TypeError, OSError and subclasses, ModbusTCPException, MBAPHeaderNotValid.
+
+        """
         _check_functioncode(functioncode, None)
         """
         Create the transaction identifier.
@@ -1349,18 +1444,35 @@ class Instrument:
         return payload_from_slave
 
     def _communicate_TCP(self, request):
+        """Perform the actual communication with the remote host.
+
+        Args:
+            * request (bytes): Body of the TCP frame. It consists in the MBAP header and the ModBus PDU.
+
+        Returns:
+            A tuple (mbap, data), where 'mbap' is the response MBAP header and 'data' is the response ModBus PDU.
+
+        Raises:
+            OSError and subclasses, ModbusTCPException, MBAPHeaderNotValid
+
+        """
+        if not self.is_open():
+            self._print_debug("Connection was closed. Will try to re-open.")
+            self.open(self._host, self._port, self._timeout)
+
         self._print_debug("Will write to instrument: {!r}".format(
                 request
             )
         )
         try:
-            send_b = self._sock.send(request)
+            send_f = self._sock.sendall(request)
         except OSError:
+            self.close()
             raise
         
-        if send_b != len(request):
+        if send_f is not None:
             self.close()
-            raise ModbusTCPException("Something went wrong while sending data to remote host: size does not match.")
+            raise ModbusTCPException("Something went wrong while sending data to remote host.")
 
         try:
             """
@@ -1583,15 +1695,13 @@ class ModbusException(IOError):
     """
 
 class ModbusTCPException(IOError):
-    """
-    Base class for Modbus TCP communication exceptions.
+    """Base class for Modbus TCP communication exceptions.
+    
     Inherits from IOError, which is an alias for OSError in Python3.
     """
 
 class MBAPHeaderNotValid(ModbusTCPException):
-    """
-    The MBAP header received is not valid.
-    """
+    """The MBAP header received is not valid."""
 
 class SlaveReportedException(ModbusException):
     """Base class for exceptions that the slave (instrument) reports."""
