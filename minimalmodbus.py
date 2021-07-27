@@ -108,7 +108,7 @@ _ALL_PAYLOADFORMATS = [
 class Instrument:
     """Instrument class for talking to instruments (slaves).
 
-    Uses the Modbus RTU or ASCII protocols (via RS485 or RS232) or ModBus TCP.
+    Uses the Modbus RTU or ASCII protocols (via RS485 or RS232) or Modbus TCP.
     """
 
     def __init__(
@@ -243,7 +243,7 @@ class Instrument:
                 self._print_debug("Closing serial port {}".format(port))
                 self.serial.close()
 
-            """If MODBUS over serial line the following functions are just identity."""
+            """If Modbus over serial line the following functions are just identity."""
             self.string_to_bytes = lambda s : s
             self.bytes_to_string = lambda b : b
         else:
@@ -275,7 +275,7 @@ class Instrument:
 
         """
         if self.mode != MODE_TCP:
-            raise TypeError("The instrument is not using MODBUS TCP.")
+            raise TypeError("The instrument is not using Modbus TCP.")
         try:
             socket.inet_pton(socket.AF_INET, host)
             self._host = host
@@ -295,7 +295,7 @@ class Instrument:
             ValueError
         """
         if self.mode != MODE_TCP:
-            raise TypeError("The instrument is not using MODBUS TCP.")
+            raise TypeError("The instrument is not using Modbus TCP.")
         if 0 < int(port) < 65536:
             self._port = port
         else:
@@ -315,7 +315,7 @@ class Instrument:
         
         """
         if self.mode != MODE_TCP:
-            raise TypeError("The instrument is not using MODBUS TCP.")
+            raise TypeError("The instrument is not using Modbus TCP.")
         if timeout is None:
             self._timeout = _MAX_TIMEOUT_TCP
             return
@@ -350,7 +350,7 @@ class Instrument:
             OSError and subclasses.
         """
         if self.mode != MODE_TCP:
-            raise TypeError("The instrument is not using MODBUS TCP.")
+            raise TypeError("The instrument is not using Modbus TCP.")
         """Parse host"""
         self.host(host)
         """Parse port"""
@@ -1359,14 +1359,14 @@ class Instrument:
     # #################################### #
 
     def _perform_command_TCP(self, functioncode, payload_to_slave):
-        """Create the ModBus TCP frame to be sent to the remote host.
+        """Create the Modbus TCP frame to be sent to the remote host.
 
         Args:
             * functioncode: The functioncode for the command to be performed.
-            * payload_to_slave: ModBus PDU.
+            * payload_to_slave: Modbus PDU.
 
         Returns:
-            The ModBus PDU stripped from the functioncode.
+            The Modbus PDU stripped from the functioncode.
 
         Raises:
             ValueError, TypeError, OSError and subclasses, ModbusTCPException, MBAPHeaderNotValid.
@@ -1380,9 +1380,8 @@ class Instrument:
         request = _embed_payload_TCP(self._transaction_id, functioncode, payload_to_slave)
         # Communicate
         mbap, payload = self._communicate_TCP(request)
-        functioncode_rx = payload[0]
-        if functioncode_rx != functioncode:
-            self._print_debug("Function codes do not match : {} {}".format(functioncode_rx, functioncode))
+        # Add one byte (b'0') to make the payload compatible with _check_response_slaveerrorcode
+        _check_response_slaveerrorcode(self.bytes_to_string(b'0'+payload)) 
         return payload[1:] # Strip the payload from the functioncode
 
     def _perform_command(self, functioncode, payload_to_slave):
@@ -1447,10 +1446,10 @@ class Instrument:
         """Perform the actual communication with the remote host.
 
         Args:
-            * request (bytes): Body of the TCP frame. It consists in the MBAP header and the ModBus PDU.
+            * request (bytes): Body of the TCP frame. It consists in the MBAP header and the Modbus PDU.
 
         Returns:
-            A tuple (mbap, data), where 'mbap' is the response MBAP header and 'data' is the response ModBus PDU.
+            A tuple (mbap, data), where 'mbap' is the response MBAP header and 'data' is the response Modbus PDU.
 
         Raises:
             OSError and subclasses, ModbusTCPException, MBAPHeaderNotValid
@@ -1874,7 +1873,7 @@ def _embed_payload(slaveaddress, mode, functioncode, payloaddata):
 
     Args:
         * slaveaddress (int): The address of the slave.
-        * mode (str): The modbus protcol mode (MODE_RTU or MODE_ASCII)
+        * mode (str): The Modbus protcol mode (MODE_RTU or MODE_ASCII)
         * functioncode (int): The function code for the command to be performed.
           Can for example be 16 (Write register).
         * payloaddata (str): The byte string to be sent to the slave.
@@ -1955,7 +1954,7 @@ def _extract_payload(response, slaveaddress, mode, functioncode):
         * response (str): The raw response byte string from the slave.
           This is different for RTU and ASCII.
         * slaveaddress (int): The adress of the slave. Used here for error checking only.
-        * mode (str): The modbus protcol mode (MODE_RTU or MODE_ASCII)
+        * mode (str): The Modbus protcol mode (MODE_RTU or MODE_ASCII)
         * functioncode (int): Used here for error checking only.
 
     Returns:
@@ -2107,7 +2106,7 @@ def _predict_response_size(mode, functioncode, payload_to_slave):
     """Calculate the number of bytes that should be received from the slave.
 
     Args:
-     * mode (str): The modbus protcol mode (MODE_RTU or MODE_ASCII)
+     * mode (str): The Modbus protcol mode (MODE_RTU or MODE_ASCII)
      * functioncode (int): Modbus function code.
      * payload_to_slave (str): The raw request that is to be sent to the slave
        (not hex encoded string)
@@ -2144,7 +2143,7 @@ def _predict_response_size(mode, functioncode, payload_to_slave):
     elif functioncode in [1, 2, 3, 4]:
         given_size = _twobyte_string_to_num(payload_to_slave[BYTERANGE_FOR_GIVEN_SIZE])
         if functioncode in [1, 2]:
-            # Algorithm from MODBUS APPLICATION PROTOCOL SPECIFICATION V1.1b
+            # Algorithm from Modbus APPLICATION PROTOCOL SPECIFICATION V1.1b
             number_of_inputs = given_size
             response_payload_size = (
                 NUMBER_OF_PAYLOAD_BYTES_FOR_BYTECOUNTFIELD
@@ -2935,7 +2934,7 @@ def _calculate_number_of_bytes_for_bits(number_of_bits):
 
     Error checking should have been done before.
 
-    Algorithm from MODBUS APPLICATION PROTOCOL SPECIFICATION V1.1b
+    Algorithm from Modbus APPLICATION PROTOCOL SPECIFICATION V1.1b
 
     """
     result = number_of_bits // _BITS_PER_BYTE  # Integer division in Python2 and 3
@@ -3500,7 +3499,7 @@ def _calculate_lrc_string(inputstring):
     Returns:
         A one-byte LRC bytestring (not encoded to hex-string)
 
-    Algorithm from the document 'MODBUS over serial line specification and
+    Algorithm from the document 'Modbus over serial line specification and
     implementation guide V1.02'.
 
     The LRC is calculated as 8 bits (one byte).
@@ -3524,8 +3523,8 @@ def _calculate_lrc_string(inputstring):
     return _num_to_onebyte_string(lrc)
 
 
-def _check_mode(mode):
-    """Check that the Modbus mode is valie.
+def _check_mode(mode, list_of_allowed_values = None):
+    """Check that the Modbus mode is correct.
 
     Args:
         mode (string): The Modbus mode (MODE_RTU or MODE_ASCII)
@@ -3537,9 +3536,13 @@ def _check_mode(mode):
     if not isinstance(mode, str):
         raise TypeError("The {0} should be a string. Given: {1!r}".format("mode", mode))
 
-    if mode not in [MODE_RTU, MODE_ASCII, MODE_TCP]:
+    if list_of_allowed_values is None:
+        list_of_allowed_values = [MODE_RTU, MODE_ASCII, MODE_TCP]
+        
+    if mode not in list_of_allowed_values:
         raise ValueError(
-            "Unreconized Modbus mode given. Must be 'rtu' or 'ascii' or 'tcp' but {0!r} was given.".format(
+            "Unreconized Modbus mode given. Must be in {!r}. Given {}.".format(
+                list_of_allowed_values,
                 mode
             )
         )
@@ -4134,7 +4137,7 @@ def _print_out(inputstring):
 
 #         Modbus bytestring decoder
 #         Input string (length 8 characters): '\n\x03\x10\x01\x00\x01\xd0q'
-#         Probably modbus RTU mode.
+#         Probably Modbus RTU mode.
 #         Slave address: 10 (dec). Function code: 3 (dec).
 #         Valid message. Extracted payload: '\x10\x01\x00\x01'
 
@@ -4157,7 +4160,7 @@ def _print_out(inputstring):
 #         len(inputstr), inputstr
 #     )
 
-#     # Detect modbus type
+#     # Detect Modbus type
 #     if inputstr.startswith(_ASCII_HEADER) and inputstr.endswith(_ASCII_FOOTER):
 #         mode = MODE_ASCII
 #     else:
