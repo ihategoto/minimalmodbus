@@ -274,8 +274,7 @@ class Instrument:
             OSError
 
         """
-        if self.mode != MODE_TCP:
-            raise TypeError("The instrument is not using Modbus TCP.")
+        _check_mode(self.mode, [MODE_TCP, ])
         try:
             socket.inet_pton(socket.AF_INET, host)
             self._host = host
@@ -294,8 +293,7 @@ class Instrument:
         Raises:
             ValueError
         """
-        if self.mode != MODE_TCP:
-            raise TypeError("The instrument is not using Modbus TCP.")
+        _check_mode(self.mode, [MODE_TCP, ])
         if 0 < int(port) < 65536:
             self._port = port
         else:
@@ -314,8 +312,7 @@ class Instrument:
             ValueError
         
         """
-        if self.mode != MODE_TCP:
-            raise TypeError("The instrument is not using Modbus TCP.")
+        _check_mode(self.mode, [MODE_TCP, ])
         if timeout is None:
             self._timeout = _MAX_TIMEOUT_TCP
             return
@@ -349,8 +346,7 @@ class Instrument:
         Raises:
             OSError and subclasses.
         """
-        if self.mode != MODE_TCP:
-            raise TypeError("The instrument is not using Modbus TCP.")
+        _check_mode(self.mode, [MODE_TCP, ])
         """Parse host"""
         self.host(host)
         """Parse port"""
@@ -3536,12 +3532,15 @@ def _check_mode(mode, list_of_allowed_values = None):
     if not isinstance(mode, str):
         raise TypeError("The {0} should be a string. Given: {1!r}".format("mode", mode))
 
+    if not (list_of_allowed_values is None or isinstance(list_of_allowed_values, list)):
+        raise TypeError("The {0} should be None or a list. Given {1!r}".format("list_of_allowed_values", list_of_allowed_values))
+
     if list_of_allowed_values is None:
         list_of_allowed_values = [MODE_RTU, MODE_ASCII, MODE_TCP]
-        
+
     if mode not in list_of_allowed_values:
         raise ValueError(
-            "Unreconized Modbus mode given. Must be in {!r}. Given {}.".format(
+            "Unreconized Modbus mode given. Must be in {!r}. Given: {}".format(
                 list_of_allowed_values,
                 mode
             )
