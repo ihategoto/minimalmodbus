@@ -288,7 +288,7 @@ class Instrument:
         Args:
             * port (int): remote host's port.
         
-        Returns.
+        Returns:
             None
 
         Raises:
@@ -3537,9 +3537,9 @@ def _check_mode(mode):
     if not isinstance(mode, str):
         raise TypeError("The {0} should be a string. Given: {1!r}".format("mode", mode))
 
-    if mode not in [MODE_RTU, MODE_ASCII]:
+    if mode not in [MODE_RTU, MODE_ASCII, MODE_TCP]:
         raise ValueError(
-            "Unreconized Modbus mode given. Must be 'rtu' or 'ascii' but {0!r} was given.".format(
+            "Unreconized Modbus mode given. Must be 'rtu' or 'ascii' or 'tcp' but {0!r} was given.".format(
                 mode
             )
         )
